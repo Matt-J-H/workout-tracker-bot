@@ -9,9 +9,11 @@ import discord
 from board import update_board
 from service import announce_workout, apply_week_override, record_workout
 from timeutils import (
-    days_input_str,
+    DAY_NAMES,
+    days_to_str,
     format_days,
     parse_workout_date,
+    str_to_days,
     today_in,
     week_start,
 )
@@ -34,11 +36,9 @@ async def build_override_modal(bot, guild_id: int, user_id: int) -> "OverrideMod
     today = await _server_today(bot, guild_id)
     ws = week_start(today).isoformat()
     goal, intended_str = await db.effective_week(guild_id, user_id, ws, ws)
-    from timeutils import str_to_days
-
     return OverrideModal(
         default_goal=str(goal),
-        default_planned=days_input_str(str_to_days(intended_str)),
+        current_planned=str_to_days(intended_str),
     )
 
 
@@ -135,24 +135,38 @@ class WorkoutModal(discord.ui.Modal, title="Log a workout"):
 
 
 class OverrideModal(discord.ui.Modal, title="Schedule this week"):
-    def __init__(self, default_goal: str, default_planned: str) -> None:
+    def __init__(self, default_goal: str, current_planned: list[int]) -> None:
         super().__init__()
         self.goal = discord.ui.TextInput(
-            label="Days this week (0–7)",
+            label="Goal — days this week (0–7)",
             placeholder="e.g. 4",
             default=default_goal,
             required=True,
             max_length=2,
         )
-        self.planned = discord.ui.TextInput(
-            label="Planned days (optional)",
-            placeholder="e.g. Mon, Wed, Fri  (leave blank for none)",
-            default=default_planned,
-            required=False,
-            max_length=100,
-        )
         self.add_item(self.goal)
-        self.add_item(self.planned)
+
+        # One checkbox per day, pre-checked to this week's current planned days.
+        self.days = discord.ui.CheckboxGroup(min_values=0, max_values=7, required=False)
+        for i, name in enumerate(DAY_NAMES):
+            self.days.add_option(label=name, value=str(i), default=(i in current_planned))
+        self.add_item(
+            discord.ui.Label(
+                text="Planned days (optional)",
+                description="The days you intend to work out this week.",
+                component=self.days,
+            )
+        )
+
+        # "Make default" always starts unchecked.
+        self.make_default = discord.ui.Checkbox(default=False)
+        self.add_item(
+            discord.ui.Label(
+                text="Make this my default schedule",
+                description="Also save this goal and these days as your weekly default.",
+                component=self.make_default,
+            )
+        )
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
         if interaction.guild is None:
@@ -165,28 +179,33 @@ class OverrideModal(discord.ui.Modal, title="Schedule this week"):
             goal = int(self.goal.value.strip())
         except ValueError:
             await interaction.response.send_message(
-                "Days this week must be a whole number between 0 and 7.",
-                ephemeral=True,
+                "Goal must be a whole number between 0 and 7.", ephemeral=True
             )
             return
 
-        # Whatever's in the field is the new plan; blank/"none" clears it.
-        raw = self.planned.value.strip()
-        planned_arg = "" if raw.lower() in {"", "none", "clear", "-"} else raw
+        planned = sorted(int(v) for v in self.days.values)
+        planned_str = days_to_str(planned)
 
         bot = interaction.client
         try:
             goal, intended = await apply_week_override(
                 bot, interaction.guild, interaction.user.id,
-                goal_days=goal, planned_days=planned_arg,
+                goal_days=goal, planned_days=planned_str,
             )
         except ValueError as e:
             await interaction.response.send_message(str(e), ephemeral=True)
             return
 
+        default_note = "Your default is unchanged."
+        if self.make_default.value:
+            await bot.db.set_user_goal(
+                interaction.guild_id, interaction.user.id, goal, planned_str
+            )
+            default_note = "Saved as your new default schedule too."
+
         await interaction.response.send_message(
             f"This week set to **{goal} day(s)** "
-            f"(planned: **{format_days(intended)}**). Your default is unchanged.",
+            f"(planned: **{format_days(intended)}**). {default_note}",
             ephemeral=True,
         )
         await update_board(bot, interaction.guild)
