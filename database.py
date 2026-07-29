@@ -104,6 +104,45 @@ class Database:
         await self._db.commit()
         await self._migrate()
 
+    async def storage_summary(self, guild_id: int) -> dict:
+        """Where the database lives and what's in it — used by /dbstatus to
+        confirm data is actually persisting (e.g. on a hosted volume)."""
+        resolved = os.path.abspath(self.path)
+        out: dict = {
+            "path": resolved,
+            "absolute": os.path.isabs(self.path),
+            "size_bytes": None,
+            "modified": None,
+        }
+        try:
+            st = os.stat(resolved)
+            out["size_bytes"] = st.st_size
+            out["modified"] = datetime.fromtimestamp(st.st_mtime, timezone.utc)
+        except OSError:
+            pass
+
+        async def scalar(sql: str, *args):
+            async with self.db.execute(sql, args) as cur:
+                row = await cur.fetchone()
+                return row[0] if row else None
+
+        out["users"] = await scalar(
+            "SELECT COUNT(*) FROM user_config WHERE guild_id = ?", guild_id
+        )
+        out["workouts"] = await scalar(
+            "SELECT COUNT(*) FROM workout WHERE guild_id = ?", guild_id
+        )
+        out["overrides"] = await scalar(
+            "SELECT COUNT(*) FROM week_override WHERE guild_id = ?", guild_id
+        )
+        out["first_workout"] = await scalar(
+            "SELECT MIN(workout_date) FROM workout WHERE guild_id = ?", guild_id
+        )
+        out["last_workout"] = await scalar(
+            "SELECT MAX(workout_date) FROM workout WHERE guild_id = ?", guild_id
+        )
+        return out
+
     async def _migrate(self) -> None:
         """Apply lightweight schema migrations to existing databases."""
         async with self._db.execute("PRAGMA table_info(week_override)") as cur:

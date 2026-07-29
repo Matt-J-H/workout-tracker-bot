@@ -147,6 +147,49 @@ class Admin(commands.Cog):
                 ephemeral=True,
             )
 
+    @app_commands.command(
+        name="dbstatus",
+        description="Show where data is stored and confirm it's persisting (admins).",
+    )
+    @app_commands.checks.has_permissions(manage_guild=True)
+    @app_commands.guild_only()
+    async def dbstatus(self, interaction: discord.Interaction) -> None:
+        s = await self.bot.db.storage_summary(interaction.guild_id)
+
+        size = s["size_bytes"]
+        size_txt = f"{size / 1024:.1f} KB" if size is not None else "unknown"
+        modified = s["modified"]
+        mod_txt = (
+            f"<t:{int(modified.timestamp())}:R>" if modified is not None else "unknown"
+        )
+
+        if s["absolute"]:
+            verdict = (
+                "✅ Absolute path — this should be your mounted volume. "
+                "Confirm the numbers below keep growing across redeploys."
+            )
+        else:
+            verdict = (
+                "⚠️ **Relative path.** On a hosted container this is ephemeral "
+                "storage and **everything is wiped on every redeploy**. Set "
+                "`DATABASE_PATH` to your volume (e.g. `/data/tracker.db`)."
+            )
+
+        span = "no workouts yet"
+        if s["first_workout"]:
+            span = f"{s['first_workout']} → {s['last_workout']}"
+
+        embed = discord.Embed(title="\U0001f4be Database status", color=0x5865F2)
+        embed.add_field(name="File", value=f"`{s['path']}`", inline=False)
+        embed.add_field(name="Size", value=size_txt, inline=True)
+        embed.add_field(name="Last write", value=mod_txt, inline=True)
+        embed.add_field(name="Members set up", value=str(s["users"]), inline=True)
+        embed.add_field(name="Workouts logged", value=str(s["workouts"]), inline=True)
+        embed.add_field(name="Week records", value=str(s["overrides"]), inline=True)
+        embed.add_field(name="Workout dates", value=span, inline=False)
+        embed.add_field(name="Persistence", value=verdict, inline=False)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
     async def cog_app_command_error(
         self, interaction: discord.Interaction, error: app_commands.AppCommandError
     ) -> None:

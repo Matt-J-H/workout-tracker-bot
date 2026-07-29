@@ -38,6 +38,7 @@ Weeks run **Sunday → Saturday** using one shared server timezone.
 | --- | --- | --- |
 | `/setup [channel] [notify_channel] [notify_role] [timezone]` | Manage Server | Configure board channel (defaults to current), optional separate notifications channel, notify role, timezone; posts the board |
 | `/refresh` | Manage Server | Refresh the current week's board (or start it) |
+| `/dbstatus` | Manage Server | Show where data is stored and confirm it's persisting |
 | `/goal days [planned_days]` | anyone | Set your default weekly goal (+ optional planned days) |
 | `/planned days` | anyone | Set/clear your default planned days |
 | `/override days [planned_days]` | anyone | Override just this week |

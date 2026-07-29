@@ -106,6 +106,42 @@ to keep it, tell me — moving a SQLite file onto a Railway volume takes a coupl
 of extra steps (upload via the Railway CLI). Otherwise the bot starts with a
 fresh database in the cloud.
 
+## Checking that data is actually persisting
+
+Run **`/dbstatus`** in Discord (admins only). It reports the database file path,
+its size, when it was last written, and how many members/workouts are stored.
+
+What you want to see:
+
+- **File:** `/data/tracker.db` — an absolute path inside the volume.
+- **Persistence:** the ✅ line. A ⚠️ means `DATABASE_PATH` is relative, i.e.
+  ephemeral storage that is wiped on every redeploy.
+- **Across a redeploy:** the counts should stay the same or grow — never reset
+  to 0. That's the real proof it's persisting.
+
+The startup logs (**Deployments → View Logs**) show the same thing:
+
+```
+INFO tracker.db: Database: /data/tracker.db (existing file)
+```
+
+`NEW empty file` on every deploy means the volume isn't wired up.
+
+### Inspecting the volume directly (optional)
+
+With the [Railway CLI](https://docs.railway.app/guides/cli) installed:
+
+```bash
+railway ssh
+```
+
+Then, inside the container:
+
+```bash
+ls -la /data
+python -c "import sqlite3;c=sqlite3.connect('/data/tracker.db');print(c.execute('select count(*) from workout').fetchone())"
+```
+
 ## Troubleshooting
 
 - **Crash loop / exits immediately:** almost always a bad or missing
