@@ -4,6 +4,8 @@ The view has timeout=None and a fixed custom_id so it keeps working after the
 bot restarts (registered in the bot's setup_hook via add_view)."""
 from __future__ import annotations
 
+import logging
+
 import discord
 
 from board import update_board
@@ -17,6 +19,8 @@ from timeutils import (
     today_in,
     week_start,
 )
+
+log = logging.getLogger("tracker.views")
 
 
 async def _server_today(bot, guild_id: int):
@@ -124,14 +128,38 @@ class WorkoutModal(discord.ui.Modal, title="Log a workout"):
             notes=self.notes.value.strip() or None,
         )
 
-        # Acknowledge the modal silently (no ephemeral message) so nothing is
-        # left sitting below the board in the board channel. Feedback comes from
-        # the public notification and the board updating the person's row.
-        await interaction.response.defer()
+        where = "this week" if result.is_current_week else (
+            f"the week of {wdate.strftime('%b %d')}"
+        )
+        if result.is_current_week:
+            confirm = f"Logged! You're at **{result.done_count}/{result.goal}** {where}."
+        else:
+            confirm = (
+                f"Logged for **{wdate.isoformat()}**. That puts you at "
+                f"**{result.done_count}/{result.goal}** for {where}."
+            )
+        if result.just_hit:
+            confirm += " \U0001f389 Goal complete!"
 
-        # Post the notification first, then re-post the board so it stays last.
-        await announce_workout(bot, interaction.guild, interaction.user, result)
-        await update_board(bot, interaction.guild)
+        # Must use send_message (response type 4). A bare defer() sends
+        # DEFERRED_UPDATE_MESSAGE (type 6), which Discord rejects for a modal
+        # opened from a slash command because there's no message to update — and
+        # that failure used to abort the notification and board update below.
+        try:
+            await interaction.response.send_message(confirm, ephemeral=True)
+        except discord.HTTPException:
+            log.exception("Failed to send workout confirmation")
+
+        # Each step is isolated so one failure can't swallow the others: the
+        # workout is already saved, so the board and notification must still run.
+        try:
+            await announce_workout(bot, interaction.guild, interaction.user, result)
+        except Exception:  # noqa: BLE001
+            log.exception("Failed to announce workout")
+        try:
+            await update_board(bot, interaction.guild)
+        except Exception:  # noqa: BLE001
+            log.exception("Failed to update board after workout")
 
 
 class OverrideModal(discord.ui.Modal, title="Schedule this week"):
@@ -208,7 +236,10 @@ class OverrideModal(discord.ui.Modal, title="Schedule this week"):
             f"(planned: **{format_days(intended)}**). {default_note}",
             ephemeral=True,
         )
-        await update_board(bot, interaction.guild)
+        try:
+            await update_board(bot, interaction.guild)
+        except Exception:  # noqa: BLE001
+            log.exception("Failed to update board after schedule change")
 
 
 class LogWorkoutView(discord.ui.View):

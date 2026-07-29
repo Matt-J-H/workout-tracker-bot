@@ -9,12 +9,15 @@ All persistent state lives here. The week-goal design:
 """
 from __future__ import annotations
 
+import logging
 import os
 from datetime import date, datetime, timedelta, timezone
 
 import aiosqlite
 
 from timeutils import week_start
+
+log = logging.getLogger("tracker.db")
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS guild_config (
@@ -76,6 +79,25 @@ class Database:
         directory = os.path.dirname(self.path)
         if directory:
             os.makedirs(directory, exist_ok=True)
+
+        resolved = os.path.abspath(self.path)
+        existed = os.path.exists(resolved)
+        log.info(
+            "Database: %s (%s)",
+            resolved,
+            "existing file" if existed else "NEW empty file",
+        )
+        if not os.path.isabs(self.path):
+            # On a container host (Railway/Fly/etc.) a relative path lands on the
+            # ephemeral filesystem and is wiped on every redeploy, silently
+            # resetting everyone's goals and history.
+            log.warning(
+                "DATABASE_PATH (%r) is a relative path. If this bot is hosted in a "
+                "container, set DATABASE_PATH to a persistent volume (e.g. "
+                "/data/tracker.db) or all data will be lost on every redeploy.",
+                self.path,
+            )
+
         self._db = await aiosqlite.connect(self.path)
         self._db.row_factory = aiosqlite.Row
         await self._db.executescript(SCHEMA)
